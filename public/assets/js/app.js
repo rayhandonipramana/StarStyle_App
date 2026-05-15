@@ -202,6 +202,24 @@ function markFlatpickrWeek(instance, date, className) {
 function initBookingAvailability() {
     document.querySelectorAll(".js-booking-form").forEach((form) => {
         const trigger = form.querySelector(".js-load-slots");
+        const slotTarget = form.querySelector(".js-availability-target");
+        const resolveServiceIds = () => {
+            const checkedServices = Array.from(form.querySelectorAll(".js-booking-service:checked")).map((input) => input.value);
+            if (checkedServices.length > 0) {
+                return checkedServices.join(",");
+            }
+
+            const serviceSelect = form.querySelector("[name='service_ids[]']");
+            return Array.from(serviceSelect?.selectedOptions ?? []).map((option) => option.value).join(",");
+        };
+        const resetSlotTarget = () => {
+            if (!slotTarget) {
+                return;
+            }
+
+            slotTarget.innerHTML = "<option value=''>Pilih slot</option>";
+        };
+
         if (!trigger) {
             return;
         }
@@ -209,13 +227,13 @@ function initBookingAvailability() {
         trigger.addEventListener("click", async () => {
             const staffId = form.querySelector("[name='staff_id']")?.value;
             const date = form.querySelector("[name='date']")?.value;
-            const serviceSelect = form.querySelector("[name='service_ids[]']");
-            const slotTarget = form.querySelector(".js-availability-target");
             const timeInput = form.querySelector(".js-calendar-time-input, [name='time']");
-            const serviceIds = Array.from(serviceSelect?.selectedOptions ?? []).map((option) => option.value).join(",");
+            const serviceIds = resolveServiceIds();
 
             if (!staffId || !date || !serviceIds || !slotTarget) {
-                slotTarget.innerHTML = "<option value=''>Lengkapi staff, tanggal, dan layanan</option>";
+                if (slotTarget) {
+                    slotTarget.innerHTML = "<option value=''>Lengkapi staff, tanggal, dan layanan</option>";
+                }
                 return;
             }
 
@@ -239,6 +257,10 @@ function initBookingAvailability() {
             if (timeInput) {
                 timeInput.value = event.target.value;
             }
+        });
+
+        form.querySelectorAll(".js-booking-service, [name='staff_id'], [name='date']").forEach((input) => {
+            input.addEventListener("change", resetSlotTarget);
         });
     });
 }

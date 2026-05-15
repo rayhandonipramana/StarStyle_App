@@ -12,25 +12,37 @@
     <link href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css" rel="stylesheet">
     <link href="<?= e(asset('css/app.css')) ?>" rel="stylesheet">
 </head>
+<?php
+$currentPage = (string) ($page ?? '');
+$hidePublicHeader = str_starts_with($currentPage, '/customer/') || $currentPage === '/booking';
+?>
 <body class="public-shell">
-<header class="public-header">
-    <div class="container">
-        <nav class="navbar navbar-expand-lg py-3">
-            <a class="navbar-brand fw-bold text-white d-flex align-items-center gap-2" href="<?= e(url('/')) ?>">
-                <span class="brand-mark">S</span>
-                <span>StarStyle</span>
-            </a>
-            <div class="ms-auto d-flex align-items-center gap-3">
-                <?php foreach (($publicNav ?? []) as $item): ?>
-                    <a class="text-white text-decoration-none small" href="<?= e(url($item['path'])) ?>"><?= e($item['label']) ?></a>
-                <?php endforeach; ?>
-                <a class="btn btn-light rounded-pill px-4" href="<?= e(url('/customer/login')) ?>">Customer Login</a>
-                <a class="btn btn-dark rounded-pill px-4" href="<?= e(url('/login')) ?>">Admin</a>
-            </div>
-        </nav>
-    </div>
-</header>
-<main>
+<div class="public-shell__bg"></div>
+<?php if (!$hidePublicHeader): ?>
+    <header class="public-header">
+        <div class="container">
+            <nav class="navbar navbar-expand-lg public-navbar">
+                <a class="navbar-brand public-brand" href="<?= e(url('/')) ?>">
+                    <span class="brand-mark">S</span>
+                    <span>
+                        <strong>StarStyle</strong>
+                        <small>Salon experience crafted beautifully</small>
+                    </span>
+                </a>
+                <div class="public-nav ms-auto">
+                    <?php foreach (($publicNav ?? []) as $item): ?>
+                        <a class="public-nav__link <?= active_path($item['path'], $page ?? '') ? 'is-active' : '' ?>" href="<?= e(url($item['path'])) ?>"><?= e($item['label']) ?></a>
+                    <?php endforeach; ?>
+                </div>
+                <div class="public-actions">
+                    <a class="btn btn-light rounded-pill px-4" href="<?= e(url('/customer/login')) ?>">Customer Login</a>
+                    <a class="btn btn-dark rounded-pill px-4" href="<?= e(url('/login')) ?>">Admin</a>
+                </div>
+            </nav>
+        </div>
+    </header>
+<?php endif; ?>
+<main class="public-main">
     <?php if (!empty($success) || !empty($error)): ?>
         <div class="container pt-4">
             <?php if (!empty($success)): ?><div class="alert alert-success border-0 rounded-4"><?= e($success) ?></div><?php endif; ?>

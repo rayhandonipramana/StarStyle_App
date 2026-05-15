@@ -38,12 +38,27 @@ final class PublicController extends BaseController
 
     public function booking(): void
     {
+        $customerUser = $this->auth()->user('customer');
+        $currentCustomer = $customerUser !== null
+            ? $this->repo()->findCustomer((int) ($customerUser['customer_id'] ?? 0))
+            : null;
+        $serviceGroups = [];
+
+        foreach ($this->repo()->getServiceGroups() as $group) {
+            $serviceGroups[] = [
+                'group' => $group,
+                'services' => array_values(array_filter($this->repo()->getServices(), fn (array $service): bool => $service['group_id'] === $group['id'])),
+            ];
+        }
+
         $this->view('pages/public/booking', [
             'title' => 'Reservasi Salon',
             'page' => '/booking',
             'publicNav' => config('public_nav'),
             'services' => $this->repo()->getServices(),
+            'serviceGroups' => $serviceGroups,
             'staff' => $this->repo()->getStaff(),
+            'currentCustomer' => $currentCustomer,
             'success' => flash('success'),
             'error' => flash('error'),
         ], 'public');
