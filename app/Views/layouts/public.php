@@ -14,7 +14,7 @@
 </head>
 <?php
 $currentPage = (string) ($page ?? '');
-$hidePublicHeader = str_starts_with($currentPage, '/customer/') || $currentPage === '/booking';
+$hidePublicHeader = str_starts_with($currentPage, '/customer/') || str_starts_with($currentPage, '/booking');
 ?>
 <body class="public-shell">
 <div class="public-shell__bg"></div>

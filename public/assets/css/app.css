@@ -919,6 +919,174 @@
     line-height: 1.6;
 }
 
+.public-payment-card {
+    padding: 1.6rem;
+}
+
+.public-payment-hero {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    align-items: end;
+}
+
+.public-payment-card__head {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    align-items: flex-start;
+    margin-bottom: 1.2rem;
+}
+
+.public-payment-card__head h2 {
+    margin: 0.2rem 0 0;
+    color: #172c49;
+    font-size: 1.9rem;
+    font-weight: 800;
+}
+
+.public-payment-status {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.7rem 1rem;
+    border-radius: 999px;
+    background: #eef5ff;
+    color: #4f7fbe;
+    font-size: 0.82rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.public-payment-info-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.9rem;
+    margin-bottom: 1rem;
+}
+
+.public-payment-info-grid > div {
+    padding: 1rem;
+    border-radius: 1rem;
+    background: #f8fbff;
+    border: 1px solid #e5eef9;
+}
+
+.public-payment-info-grid small,
+.public-payment-info-grid strong {
+    display: block;
+}
+
+.public-payment-info-grid small {
+    color: #7c92af;
+    font-size: 0.74rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.public-payment-info-grid strong {
+    margin-top: 0.35rem;
+    color: #183051;
+}
+
+.public-payment-services {
+    display: grid;
+    gap: 0.8rem;
+    margin-bottom: 1rem;
+}
+
+.public-payment-service-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    align-items: center;
+    padding: 1rem;
+    border-radius: 1rem;
+    background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
+    border: 1px solid #e7eef8;
+}
+
+.public-payment-service-row strong,
+.public-payment-service-row span {
+    display: block;
+}
+
+.public-payment-service-row span {
+    margin-top: 0.25rem;
+    color: #7387a3;
+}
+
+.public-payment-form {
+    display: grid;
+    gap: 1rem;
+}
+
+.public-payment-methods {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.9rem;
+}
+
+.public-payment-method {
+    display: block;
+    margin: 0;
+    cursor: pointer;
+}
+
+.public-payment-method input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.public-payment-method span {
+    display: flex;
+    min-height: 58px;
+    align-items: center;
+    justify-content: center;
+    padding: 0.95rem 1rem;
+    border-radius: 1rem;
+    border: 1px solid #dfe9f7;
+    background: #ffffff;
+    color: #29476d;
+    font-weight: 700;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+.public-payment-method input:checked + span {
+    border-color: #83b9ff;
+    background: #f2f8ff;
+    box-shadow: 0 16px 30px rgba(39, 80, 142, 0.1);
+}
+
+.public-payment-footer {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    align-items: center;
+    padding-top: 0.5rem;
+}
+
+.public-payment-total small,
+.public-payment-total strong {
+    display: block;
+}
+
+.public-payment-total small {
+    color: #7c92af;
+    font-size: 0.74rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.public-payment-total strong {
+    margin-top: 0.25rem;
+    color: #183051;
+    font-size: 1.8rem;
+    font-weight: 800;
+}
+
 .public-login-shell {
     display: grid;
     grid-template-columns: minmax(0, 1.02fr) minmax(360px, 0.98fr);
@@ -1084,7 +1252,11 @@
     .public-service-picker__group-head,
     .public-service-option__top,
     .public-service-option__bottom,
-    .public-customer-identity__main {
+    .public-customer-identity__main,
+    .public-payment-card__head,
+    .public-payment-footer,
+    .public-payment-service-row,
+    .public-payment-hero {
         flex-direction: column;
         align-items: stretch;
     }
@@ -1107,7 +1279,9 @@
     .public-booking-hero,
     .public-booking-summary,
     .public-services-summary,
-    .public-service-picker__grid {
+    .public-service-picker__grid,
+    .public-payment-info-grid,
+    .public-payment-methods {
         grid-template-columns: 1fr;
     }
 
