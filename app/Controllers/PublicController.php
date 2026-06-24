@@ -38,12 +38,27 @@ final class PublicController extends BaseController
 
     public function booking(): void
     {
+        $customerUser = $this->auth()->user('customer');
+        $currentCustomer = $customerUser !== null
+            ? $this->repo()->findCustomer((int) ($customerUser['customer_id'] ?? 0))
+            : null;
+        $serviceGroups = [];
+
+        foreach ($this->repo()->getServiceGroups() as $group) {
+            $serviceGroups[] = [
+                'group' => $group,
+                'services' => array_values(array_filter($this->repo()->getServices(), fn (array $service): bool => $service['group_id'] === $group['id'])),
+            ];
+        }
+
         $this->view('pages/public/booking', [
             'title' => 'Reservasi Salon',
             'page' => '/booking',
             'publicNav' => config('public_nav'),
             'services' => $this->repo()->getServices(),
+            'serviceGroups' => $serviceGroups,
             'staff' => $this->repo()->getStaff(),
+            'currentCustomer' => $currentCustomer,
             'success' => flash('success'),
             'error' => flash('error'),
         ], 'public');
@@ -53,8 +68,50 @@ final class PublicController extends BaseController
     {
         verify_csrf();
         $result = $this->repo()->createBooking($_POST, 'customer');
-        flash($result['success'] ? 'success' : 'error', $result['message']);
-        $this->redirect('/booking');
+        if (!$result['success']) {
+            flash('error', $result['message']);
+            $this->redirect('/booking');
+        }
+
+        flash('success', $result['message']);
+        $bookingId = (int) ($result['booking']['id'] ?? 0);
+        $this->redirect('/booking/payment?booking=' . $bookingId);
+    }
+
+    public function payment(): void
+    {
+        $user = $this->customerUser();
+        $bookingId = (int) ($_GET['booking'] ?? 0);
+        $summary = $this->repo()->bookingPaymentSummary($bookingId);
+
+        if ($summary === null || (int) ($summary['booking']['customer_id'] ?? 0) !== (int) ($user['customer_id'] ?? 0)) {
+            flash('error', 'Booking pembayaran tidak ditemukan.');
+            $this->redirect('/customer/account');
+        }
+
+        $this->view('pages/public/booking-payment', [
+            'title' => 'Pembayaran Booking',
+            'page' => '/booking/payment',
+            'publicNav' => config('public_nav'),
+            'success' => flash('success'),
+            'error' => flash('error'),
+        ] + $summary, 'public');
+    }
+
+    public function completePayment(): void
+    {
+        verify_csrf();
+        $user = $this->customerUser();
+        $bookingId = (int) ($_POST['booking_id'] ?? 0);
+        $result = $this->repo()->completeCustomerBookingPayment($bookingId, $_POST, $user);
+
+        if (!$result['success']) {
+            flash('error', $result['message']);
+            $this->redirect('/booking/payment?booking=' . $bookingId);
+        }
+
+        flash('success', $result['message']);
+        $this->redirect('/customer/account');
     }
 
     public function customerLogin(): void

@@ -610,6 +610,12 @@ $calendarTimedItemsFor = static function (string $date, int $staffId) use (
                 $serviceStaff = $staffMap[$itemStaffId] ?? $staff;
 
                 $items[] = [
+                    'id' => (int) ($event['id'] ?? 0),
+                    'customer_id' => (int) ($event['customer_id'] ?? 0),
+                    'customer_name' => (string) ($customer['name'] ?? $eventTitle),
+                    'customer_phone' => (string) ($customer['phone'] ?? ''),
+                    'staff_id' => $itemStaffId,
+                    'service_id' => (int) ($eventServiceItem['service_id'] ?? 0),
                     'type' => 'booking',
                     'start_at' => $startAt,
                     'end_at' => $endAt,
@@ -631,6 +637,12 @@ $calendarTimedItemsFor = static function (string $date, int $staffId) use (
 
         if ($eventServices === []) {
             $items[] = [
+                'id' => (int) ($event['id'] ?? 0),
+                'customer_id' => (int) ($event['customer_id'] ?? 0),
+                'customer_name' => (string) ($customer['name'] ?? $eventTitle),
+                'customer_phone' => (string) ($customer['phone'] ?? ''),
+                'staff_id' => (int) ($event['staff_id'] ?? 0),
+                'service_id' => 0,
                 'type' => 'booking',
                 'start_at' => $event['start_at'],
                 'end_at' => $event['end_at'],
@@ -653,6 +665,12 @@ $calendarTimedItemsFor = static function (string $date, int $staffId) use (
             $cursor = $cursor->modify("+{$duration} minutes");
 
             $items[] = [
+                'id' => (int) ($event['id'] ?? 0),
+                'customer_id' => (int) ($event['customer_id'] ?? 0),
+                'customer_name' => (string) ($customer['name'] ?? $eventTitle),
+                'customer_phone' => (string) ($customer['phone'] ?? ''),
+                'staff_id' => (int) ($event['staff_id'] ?? 0),
+                'service_id' => (int) ($eventService['id'] ?? 0),
                 'type' => 'booking',
                 'start_at' => $startAt,
                 'end_at' => $cursor->format('Y-m-d H:i:s'),
@@ -1883,6 +1901,58 @@ if ($isDayView && date('Y-m-d') !== $selectedDate->format('Y-m-d')) {
     .calendar-agenda-view__more {
         background: #f3f4f6;
         color: #111827;
+    }
+
+    .calendar-agenda-view__more-wrap {
+        position: relative;
+    }
+
+    .calendar-agenda-view__more-menu {
+        position: absolute;
+        right: 0;
+        bottom: calc(100% + 10px);
+        z-index: 12;
+        display: grid;
+        gap: 2px;
+        min-width: 220px;
+        padding: 10px;
+        border: 1px solid #e8edf4;
+        border-radius: 18px;
+        background: #fff;
+        box-shadow: 0 20px 40px rgba(15, 23, 42, 0.16);
+    }
+
+    .calendar-agenda-view__more-menu[hidden] {
+        display: none;
+    }
+
+    .calendar-agenda-view__more-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+        padding: 11px 12px;
+        border: 0;
+        border-radius: 12px;
+        background: transparent;
+        color: #4b5563;
+        font-size: 15px;
+        text-align: left;
+        transition: background 0.2s ease, color 0.2s ease;
+    }
+
+    .calendar-agenda-view__more-item:hover {
+        background: #f6f8fb;
+        color: #111827;
+    }
+
+    .calendar-agenda-view__more-item.is-danger {
+        color: #e24b5b;
+    }
+
+    .calendar-agenda-view__more-item.is-danger:hover {
+        background: rgba(226, 75, 91, 0.08);
+        color: #cc3647;
     }
 
     .calendar-agenda-view__checkout {
@@ -7176,6 +7246,10 @@ if ($isDayView && date('Y-m-d') !== $selectedDate->format('Y-m-d')) {
                                      data-event-type="<?= e((string) $item['type']) ?>"
                                      data-event-id="<?= e((string) ($item['id'] ?? 0)) ?>"
                                      data-event-staff-id="<?= e((string) ($item['staff_id'] ?? 0)) ?>"
+                                     data-event-customer-id="<?= e((string) ($item['customer_id'] ?? 0)) ?>"
+                                     data-event-customer-name="<?= e((string) ($item['customer_name'] ?? '')) ?>"
+                                     data-event-customer-phone="<?= e((string) ($item['customer_phone'] ?? '')) ?>"
+                                     data-event-service-id="<?= e((string) ($item['service_id'] ?? 0)) ?>"
                                      data-event-title="<?= e((string) $item['title']) ?>"
                                      data-event-subtitle="<?= e((string) $item['subtitle']) ?>"
                                      data-event-staff="<?= e((string) $item['staff']) ?>"
@@ -7299,6 +7373,10 @@ if ($isDayView && date('Y-m-d') !== $selectedDate->format('Y-m-d')) {
                                          data-event-type="<?= e((string) $item['type']) ?>"
                                          data-event-id="<?= e((string) ($item['id'] ?? 0)) ?>"
                                          data-event-staff-id="<?= e((string) ($item['staff_id'] ?? 0)) ?>"
+                                         data-event-customer-id="<?= e((string) ($item['customer_id'] ?? 0)) ?>"
+                                         data-event-customer-name="<?= e((string) ($item['customer_name'] ?? '')) ?>"
+                                         data-event-customer-phone="<?= e((string) ($item['customer_phone'] ?? '')) ?>"
+                                         data-event-service-id="<?= e((string) ($item['service_id'] ?? 0)) ?>"
                                          data-event-title="<?= e((string) $item['title']) ?>"
                                          data-event-subtitle="<?= e((string) $item['subtitle']) ?>"
                                          data-event-staff="<?= e((string) $item['staff']) ?>"
@@ -7374,7 +7452,7 @@ if ($isDayView && date('Y-m-d') !== $selectedDate->format('Y-m-d')) {
     </div>
 </section>
 
-<div class="modal fade" id="calendarAgendaViewModal" tabindex="-1" aria-hidden="true">
+<div class="modal fade" id="calendarAgendaViewModal" tabindex="-1" aria-hidden="true" data-status-action="<?= e(url('/calendar/bookings/status')) ?>">
     <div class="modal-dialog modal-dialog-centered calendar-agenda-view-dialog">
         <div class="modal-content calendar-agenda-view">
             <div class="calendar-agenda-view__panel">
@@ -7432,7 +7510,31 @@ if ($isDayView && date('Y-m-d') !== $selectedDate->format('Y-m-d')) {
 
                 <div class="calendar-agenda-view__footer">
                     <div class="calendar-agenda-view__total js-agenda-view-total">Total: Rp 0,00</div>
-                    <button type="button" class="calendar-agenda-view__more">Lainnya <i class="bi bi-caret-down-fill ms-1"></i></button>
+                    <div class="calendar-agenda-view__more-wrap">
+                        <button type="button" class="calendar-agenda-view__more js-agenda-view-more-toggle" aria-expanded="false">Lainnya <i class="bi bi-caret-down-fill ms-1"></i></button>
+                        <div class="calendar-agenda-view__more-menu js-agenda-view-more-menu" hidden>
+                            <button type="button" class="calendar-agenda-view__more-item js-agenda-view-action" data-agenda-view-action="edit">
+                                <i class="bi bi-pencil"></i>
+                                <span>Ubah Agenda</span>
+                            </button>
+                            <button type="button" class="calendar-agenda-view__more-item js-agenda-view-action" data-agenda-view-action="add-product">
+                                <i class="bi bi-plus-lg"></i>
+                                <span>Tambahkan Produk</span>
+                            </button>
+                            <button type="button" class="calendar-agenda-view__more-item js-agenda-view-action" data-agenda-view-action="reschedule">
+                                <i class="bi bi-calendar-event"></i>
+                                <span>Jadwal Ulang</span>
+                            </button>
+                            <button type="button" class="calendar-agenda-view__more-item is-danger js-agenda-view-action" data-agenda-view-action="cancelled">
+                                <i class="bi bi-x-lg"></i>
+                                <span>Batal</span>
+                            </button>
+                            <button type="button" class="calendar-agenda-view__more-item is-danger js-agenda-view-action" data-agenda-view-action="no_show">
+                                <i class="bi bi-person-x"></i>
+                                <span>Tidak hadir</span>
+                            </button>
+                        </div>
+                    </div>
                     <button type="button" class="calendar-agenda-view__checkout">Checkout</button>
                 </div>
             </div>
@@ -7445,6 +7547,7 @@ if ($isDayView && date('Y-m-d') !== $selectedDate->format('Y-m-d')) {
         <form method="post"
               action="<?= e(url('/calendar/bookings')) ?>"
               class="modal-content calendar-agenda-modal js-booking-form js-calendar-agenda-form"
+              data-update-action="<?= e(url('/calendar/bookings/update')) ?>"
               data-customers="<?= e(json_encode($customers, JSON_HEX_APOS | JSON_HEX_QUOT)) ?>"
               data-staff="<?= e(json_encode($calendar['staff'], JSON_HEX_APOS | JSON_HEX_QUOT)) ?>"
               data-resources="<?= e(json_encode($agendaResources, JSON_HEX_APOS | JSON_HEX_QUOT)) ?>"
@@ -7454,6 +7557,7 @@ if ($isDayView && date('Y-m-d') !== $selectedDate->format('Y-m-d')) {
               data-today="<?= e(date('Y-m-d')) ?>"
               data-sales-url="<?= e(url('/sales?tab=invoices')) ?>">
             <?= csrf_field() ?>
+            <input class="js-agenda-booking-id" type="hidden" name="booking_id" value="">
             <input class="js-agenda-customer-name" type="hidden" name="customer_name" value="Walk-In">
             <input class="js-agenda-customer-phone" type="hidden" name="customer_phone" value="">
             <input class="js-agenda-branch-input" type="hidden" name="branch_name" value="Star Salon">

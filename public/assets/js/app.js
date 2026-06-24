@@ -202,6 +202,24 @@ function markFlatpickrWeek(instance, date, className) {
 function initBookingAvailability() {
     document.querySelectorAll(".js-booking-form").forEach((form) => {
         const trigger = form.querySelector(".js-load-slots");
+        const slotTarget = form.querySelector(".js-availability-target");
+        const resolveServiceIds = () => {
+            const checkedServices = Array.from(form.querySelectorAll(".js-booking-service:checked")).map((input) => input.value);
+            if (checkedServices.length > 0) {
+                return checkedServices.join(",");
+            }
+
+            const serviceSelect = form.querySelector("[name='service_ids[]']");
+            return Array.from(serviceSelect?.selectedOptions ?? []).map((option) => option.value).join(",");
+        };
+        const resetSlotTarget = () => {
+            if (!slotTarget) {
+                return;
+            }
+
+            slotTarget.innerHTML = "<option value=''>Pilih slot</option>";
+        };
+
         if (!trigger) {
             return;
         }
@@ -209,13 +227,13 @@ function initBookingAvailability() {
         trigger.addEventListener("click", async () => {
             const staffId = form.querySelector("[name='staff_id']")?.value;
             const date = form.querySelector("[name='date']")?.value;
-            const serviceSelect = form.querySelector("[name='service_ids[]']");
-            const slotTarget = form.querySelector(".js-availability-target");
             const timeInput = form.querySelector(".js-calendar-time-input, [name='time']");
-            const serviceIds = Array.from(serviceSelect?.selectedOptions ?? []).map((option) => option.value).join(",");
+            const serviceIds = resolveServiceIds();
 
             if (!staffId || !date || !serviceIds || !slotTarget) {
-                slotTarget.innerHTML = "<option value=''>Lengkapi staff, tanggal, dan layanan</option>";
+                if (slotTarget) {
+                    slotTarget.innerHTML = "<option value=''>Lengkapi staff, tanggal, dan layanan</option>";
+                }
                 return;
             }
 
@@ -239,6 +257,10 @@ function initBookingAvailability() {
             if (timeInput) {
                 timeInput.value = event.target.value;
             }
+        });
+
+        form.querySelectorAll(".js-booking-service, [name='staff_id'], [name='date']").forEach((input) => {
+            input.addEventListener("change", resetSlotTarget);
         });
     });
 }
@@ -312,6 +334,13 @@ function initCalendarInteractions() {
             staffInputs.forEach((input) => {
                 input.value = staffId;
                 input.dataset.slotValue = staffId;
+            });
+
+            window.starStyleAgendaModalController?.openFromCalendarSlot({
+                date,
+                time,
+                staffId,
+                staffName,
             });
         });
     });
@@ -636,10 +665,16 @@ function initCalendarEventViewer() {
     const statusToggle = modal.querySelector(".js-agenda-view-status-toggle");
     const statusLabel = modal.querySelector(".js-agenda-view-status-label");
     const statusMenu = modal.querySelector(".js-agenda-view-status-menu");
+    const moreToggle = modal.querySelector(".js-agenda-view-more-toggle");
+    const moreMenu = modal.querySelector(".js-agenda-view-more-menu");
+    const checkoutButton = modal.querySelector(".calendar-agenda-view__checkout");
+    const statusActionUrl = modal.dataset.statusAction || "";
+    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute("content") || "";
 
     let currentCards = [];
     let currentStatus = "new";
     let expandedIndex = 0;
+    let isSubmittingStatus = false;
 
     const statusConfig = {
         new: { label: "NEW", className: "is-new", iconClass: "" },
@@ -719,10 +754,17 @@ function initCalendarEventViewer() {
     const readEvent = (card) => ({
         element: card,
         type: card.dataset.eventType || "booking",
+        bookingId: Number(card.dataset.eventId || 0),
+        customerId: Number(card.dataset.eventCustomerId || 0),
+        customerName: card.dataset.eventCustomerName || "",
+        customerPhone: card.dataset.eventCustomerPhone || "",
+        serviceId: Number(card.dataset.eventServiceId || 0),
         title: card.dataset.eventTitle || "Walk-In",
         subtitle: card.dataset.eventSubtitle || "Layanan salon",
         staff: card.dataset.eventStaff || "Staff",
+        staffId: Number(card.dataset.eventStaffId || 0),
         reference: card.dataset.eventReference || "",
+        notes: card.dataset.eventNotes || "",
         status: normalizeStatus(card.dataset.eventStatus),
         start: card.dataset.eventStart || "",
         end: card.dataset.eventEnd || "",
@@ -764,6 +806,52 @@ function initCalendarEventViewer() {
                 icon.classList.add(chevron);
             }
         }
+    };
+
+    const closeMoreMenu = () => {
+        if (!moreMenu) {
+            return;
+        }
+
+        moreMenu.hidden = true;
+        moreToggle?.setAttribute("aria-expanded", "false");
+    };
+
+    const currentAgendaPayload = () => {
+        const events = currentCards.map(readEvent).sort((a, b) => a.start.localeCompare(b.start));
+        if (!events.length) {
+            return null;
+        }
+
+        const first = events[0];
+        const normalizedCustomerName = String(first.customerName || first.title || "").trim();
+        const customerName = normalizedCustomerName && normalizedCustomerName.toLowerCase() !== "walk-in"
+            ? normalizedCustomerName
+            : "Walk-In";
+
+        return {
+            bookingId: first.bookingId,
+            customerId: first.customerId,
+            customerName,
+            customerPhone: first.customerPhone || "",
+            staffId: first.staffId,
+            staffName: first.staff || "Staff",
+            date: first.date || "",
+            time: first.start.slice(11, 16) || "09:00",
+            notes: first.notes || "",
+            status: normalizeStatus(first.status),
+            services: events
+                .filter((item) => item.serviceId > 0)
+                .map((item) => ({
+                    serviceId: item.serviceId,
+                    serviceName: item.subtitle,
+                    duration: item.duration,
+                    price: item.price,
+                    staffId: item.staffId || first.staffId,
+                    staffName: item.staff || first.staff || "Staff",
+                    startTime: item.start.slice(11, 16) || "",
+                })),
+        };
     };
 
     const renderServices = (events) => {
@@ -828,6 +916,62 @@ function initCalendarEventViewer() {
         });
     };
 
+    const postBookingStatus = async (nextStatus) => {
+        const payload = currentAgendaPayload();
+        if (!payload?.bookingId || !statusActionUrl || !csrfToken) {
+            currentStatus = normalizeStatus(nextStatus);
+            updateCalendarCards();
+            return;
+        }
+
+        if (isSubmittingStatus) {
+            return;
+        }
+
+        isSubmittingStatus = true;
+        try {
+            const body = new URLSearchParams();
+            body.append("_csrf", csrfToken);
+            body.append("booking_id", String(payload.bookingId));
+            body.append("status", nextStatus);
+
+            const response = await fetch(statusActionUrl, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Accept": "application/json",
+                },
+                body: body.toString(),
+            });
+            const data = await response.json().catch(() => ({}));
+
+            if (!response.ok || data.success === false) {
+                throw new Error(data.message || "Gagal memperbarui status agenda.");
+            }
+
+            window.location.reload();
+        } catch (error) {
+            console.error(error);
+            window.alert(error instanceof Error ? error.message : "Gagal memperbarui status agenda.");
+        } finally {
+            isSubmittingStatus = false;
+        }
+    };
+
+    const openAgendaAction = (action) => {
+        const payload = currentAgendaPayload();
+        if (!payload) {
+            return;
+        }
+
+        closeMoreMenu();
+        if (typeof bootstrap !== "undefined") {
+            bootstrap.Modal.getOrCreateInstance(modal).hide();
+        }
+
+        window.starStyleAgendaModalController?.openFromCalendarView(payload, action);
+    };
+
     const render = () => {
         const events = currentCards.map(readEvent).sort((a, b) => a.start.localeCompare(b.start));
 
@@ -837,7 +981,8 @@ function initCalendarEventViewer() {
 
         const first = events[0];
         const total = events.reduce((sum, item) => sum + (Number(item.price) || 0), 0);
-        const customer = first.title && first.title.toLowerCase() !== "walk-in" ? first.title : "Walk-In";
+        const customerName = String(first.customerName || first.title || "").trim();
+        const customer = customerName && customerName.toLowerCase() !== "walk-in" ? customerName : "Walk-In";
         currentStatus = normalizeStatus(first.status);
 
         if (customerNode) {
@@ -876,12 +1021,38 @@ function initCalendarEventViewer() {
     });
 
     statusMenu?.querySelectorAll("[data-agenda-view-status]").forEach((option) => {
-        option.addEventListener("click", () => {
+        option.addEventListener("click", async () => {
             currentStatus = normalizeStatus(option.dataset.agendaViewStatus);
             statusMenu.hidden = true;
             statusToggle?.setAttribute("aria-expanded", "false");
             renderStatus();
-            updateCalendarCards();
+            await postBookingStatus(currentStatus);
+        });
+    });
+
+    moreToggle?.addEventListener("click", (event) => {
+        event.stopPropagation();
+        if (!moreMenu) {
+            return;
+        }
+
+        moreMenu.hidden = !moreMenu.hidden;
+        moreToggle.setAttribute("aria-expanded", moreMenu.hidden ? "false" : "true");
+    });
+
+    checkoutButton?.addEventListener("click", () => {
+        openAgendaAction("checkout");
+    });
+
+    moreMenu?.querySelectorAll(".js-agenda-view-action").forEach((button) => {
+        button.addEventListener("click", async () => {
+            const action = button.dataset.agendaViewAction || "";
+            if (action === "cancelled" || action === "no_show") {
+                await postBookingStatus(action);
+                return;
+            }
+
+            openAgendaAction(action);
         });
     });
 
@@ -912,6 +1083,10 @@ function initCalendarEventViewer() {
             statusToggle?.setAttribute("aria-expanded", "false");
             renderStatus();
         }
+
+        if (moreMenu && !target.closest(".calendar-agenda-view__more-wrap")) {
+            closeMoreMenu();
+        }
     });
 
     modal.addEventListener("hidden.bs.modal", () => {
@@ -920,6 +1095,7 @@ function initCalendarEventViewer() {
         }
 
         statusToggle?.setAttribute("aria-expanded", "false");
+        closeMoreMenu();
         currentCards = [];
     });
 }
@@ -987,6 +1163,8 @@ function initCalendarAgendaModal() {
     }
     const todayValue = form.dataset.today || "";
     const salesUrl = form.dataset.salesUrl || "/sales?tab=invoices";
+    const createAction = form.getAttribute("action") || "";
+    const updateAction = form.dataset.updateAction || createAction;
 
     const serviceSearch = form.querySelector(".js-agenda-service-search");
     const serviceInputContainer = form.querySelector(".js-agenda-service-inputs");
@@ -1000,6 +1178,7 @@ function initCalendarAgendaModal() {
     const agendaTitle = form.querySelector(".js-agenda-title");
     const checkoutButton = form.querySelector(".js-agenda-checkout");
     const submitButton = form.querySelector(".js-agenda-submit");
+    const bookingIdInput = form.querySelector(".js-agenda-booking-id");
     const salesCartToolbar = form.querySelector(".js-calendar-sales-cart-toolbar");
     const salesCatalogTabs = Array.from(form.querySelectorAll(".js-calendar-sales-tab"));
     const salesSubfilters = form.querySelector(".js-calendar-sales-subfilters");
@@ -1180,6 +1359,8 @@ function initCalendarAgendaModal() {
     let isSharedTimePickerOpen = false;
     let useSharedStartTime = false;
     let repeatEndType = "after";
+    let agendaFormMode = "create";
+    let agendaTitleOverride = "";
 
     const normalize = (value) => String(value || "").trim().toLowerCase();
     const isSalesMode = () => agendaEntryMode === "sales";
@@ -1400,6 +1581,11 @@ function initCalendarAgendaModal() {
             return;
         }
 
+        if (agendaTitleOverride) {
+            agendaTitle.textContent = agendaTitleOverride;
+            return;
+        }
+
         if (isCheckoutMode) {
             if (isSalesMode()) {
                 agendaTitle.textContent = "Penjualan Baru";
@@ -1410,6 +1596,23 @@ function initCalendarAgendaModal() {
         }
 
         agendaTitle.textContent = isSalesMode() ? "Penjualan Baru" : "Agenda Baru";
+    };
+    const syncAgendaSubmitLabel = () => {
+        if (!submitButton) {
+            return;
+        }
+
+        submitButton.textContent = agendaFormMode === "edit" ? "Simpan Perubahan" : "Simpan Agenda";
+    };
+    const setAgendaFormState = (mode = "create", title = "") => {
+        agendaFormMode = mode === "edit" ? "edit" : "create";
+        agendaTitleOverride = title;
+        if (bookingIdInput) {
+            bookingIdInput.value = agendaFormMode === "edit" ? bookingIdInput.value : "";
+        }
+        form.setAttribute("action", agendaFormMode === "edit" ? updateAction : createAction);
+        syncAgendaTitle();
+        syncAgendaSubmitLabel();
     };
     const syncServiceSearchPlaceholder = () => {
         if (!serviceSearch) {
@@ -4110,6 +4313,8 @@ function initCalendarAgendaModal() {
         selectedItems.splice(0, selectedItems.length);
         checkoutPendingItems.splice(0, checkoutPendingItems.length);
         checkoutPayments.splice(0, checkoutPayments.length);
+        agendaFormMode = "create";
+        agendaTitleOverride = "";
         isReviewMode = false;
         isCheckoutMode = false;
         isInvoiceEditMode = false;
@@ -4181,6 +4386,9 @@ function initCalendarAgendaModal() {
         if (voucherSearchInput) {
             voucherSearchInput.value = "";
         }
+        if (bookingIdInput) {
+            bookingIdInput.value = "";
+        }
         filterButtons.forEach((button) => {
             button.classList.toggle("is-active", button.dataset.agendaFilter === "all");
         });
@@ -4192,8 +4400,153 @@ function initCalendarAgendaModal() {
         syncAgendaMode();
         applyServiceFilters();
         updateSelectedServices();
+        setAgendaFormState("create");
         hideExitConfirm();
         closeAgendaTools();
+    };
+
+    const agendaSourceFromBookingService = (service) => {
+        const serviceId = String(service?.serviceId || "");
+        const matchedCard = serviceCards.find((card) => card.dataset.serviceId === serviceId);
+
+        if (matchedCard) {
+            return servicePayload(matchedCard);
+        }
+
+        const matchedCatalog = findSalesCatalogItem("service", serviceId);
+        if (matchedCatalog) {
+            return matchedCatalog;
+        }
+
+        return {
+            id: serviceId,
+            kind: "service",
+            name: service?.serviceName || "Layanan",
+            price: Number(service?.price || 0),
+            duration: Number(service?.duration || 60),
+            category: "hair-cut",
+        };
+    };
+
+    const openFromCalendarView = (payload, action = "edit") => {
+        if (!payload) {
+            return;
+        }
+
+        resetAgendaForm();
+
+        if (bookingIdInput) {
+            bookingIdInput.value = String(payload.bookingId || "");
+        }
+        const actionTitle = action === "checkout"
+            ? "Checkout"
+            : action === "add-product"
+                ? "Tambahkan Produk"
+                : action === "reschedule"
+                    ? "Jadwal Ulang"
+                    : "Ubah Agenda";
+        setAgendaFormState("edit", actionTitle);
+
+        if (dateInput) {
+            dateInput.value = payload.date || initialAgendaDate;
+        }
+        setAgendaDate(payload.date || initialAgendaDate);
+
+        if (timeInput) {
+            timeInput.value = payload.time || initialAgendaTime;
+        }
+
+        const selectedStaffId = String(payload.staffId || staffOptions[0]?.id || "");
+        const selectedStaffName = payload.staffName || (staffOptions.find((staff) => String(staff.id) === selectedStaffId)?.name || "");
+        const staffInput = form.querySelector("[name='staff_id']");
+        if (staffInput) {
+            staffInput.value = selectedStaffId;
+        }
+
+        if (payload.customerName && payload.customerName !== "Walk-In") {
+            setNamedCustomer(payload.customerName);
+        } else {
+            setWalkInCustomer();
+        }
+
+        if (customerPhoneInput && payload.customerPhone) {
+            customerPhoneInput.value = payload.customerPhone;
+        }
+
+        if (noteInput) {
+            noteInput.value = payload.notes || "";
+        }
+        if (notePanel) {
+            notePanel.hidden = !payload.notes;
+        }
+
+        (Array.isArray(payload.services) ? payload.services : []).forEach((service, index) => {
+            const source = agendaSourceFromBookingService(service);
+            selectedItems.push(createAgendaItem(source, {
+                duration: Number(service.duration || source.duration || 60),
+                staffId: String(service.staffId || selectedStaffId),
+                staffName: service.staffName || selectedStaffName || source.staffName || "",
+                startTime: service.startTime || "",
+                checkoutExpanded: index === 0,
+            }));
+        });
+
+        updateSelectedServices();
+        setReviewMode(true);
+
+        if (action === "checkout" || action === "add-product") {
+            setCheckoutMode(true);
+            if (action === "add-product") {
+                activeSalesCatalog = "products";
+                syncAgendaMode();
+                setCheckoutItemPicker(true);
+            }
+        }
+
+        if (typeof bootstrap !== "undefined" && agendaModalEl) {
+            bootstrap.Modal.getOrCreateInstance(agendaModalEl).show();
+        }
+    };
+
+    const openFromCalendarSlot = (payload) => {
+        if (!payload) {
+            return;
+        }
+
+        resetAgendaForm();
+        setAgendaFormState("create");
+
+        agendaEntryMode = "agenda";
+        activeSalesCatalog = "services";
+        syncSalesSubfilterDefault();
+        syncAgendaMode();
+
+        if (dateInput) {
+            dateInput.value = payload.date || initialAgendaDate;
+        }
+        setAgendaDate(payload.date || initialAgendaDate);
+
+        if (timeInput) {
+            timeInput.value = payload.time || initialAgendaTime;
+        }
+
+        const selectedStaffId = String(payload.staffId || staffOptions[0]?.id || "");
+        const staffInput = form.querySelector("[name='staff_id']");
+        if (staffInput) {
+            staffInput.value = selectedStaffId;
+            staffInput.dataset.slotValue = selectedStaffId;
+        }
+
+        if (typeof bootstrap !== "undefined" && agendaModalEl) {
+            bootstrap.Modal.getOrCreateInstance(agendaModalEl).show();
+        }
+
+        serviceSearch?.focus();
+    };
+
+    window.starStyleAgendaModalController = {
+        openFromCalendarSlot,
+        openFromCalendarView,
     };
 
     closeRequest?.addEventListener("click", () => {
@@ -4226,6 +4579,7 @@ function initCalendarAgendaModal() {
     setWalkInCustomer();
     syncAgendaMode();
     updateSelectedServices();
+    setAgendaFormState("create");
     applyServiceFilters();
 }
 

@@ -1178,7 +1178,7 @@ final class SalonRepository
         return [
             'date' => $date,
             'staff' => $this->getStaff(),
-            'events' => array_values(array_filter($this->getBookings(), fn (array $booking): bool => str_starts_with($booking['start_at'], $date))),
+            'events' => array_values(array_filter($this->getBookings(), fn (array $booking): bool => str_starts_with($booking['start_at'], $date) && in_array($booking['status'], ['new', 'pending', 'confirmed', 'arrived', 'started', 'completed'], true))),
             'blocks' => array_values(array_filter($this->getBlocks(), fn (array $block): bool => str_starts_with($block['start_at'], $date))),
             'now' => date('Y-m-d') === $date ? date('H:i') : null,
         ];
@@ -1192,7 +1192,7 @@ final class SalonRepository
             return $carry + (int) ($service['duration'] ?? 0);
         }, 0);
 
-        $bookings = array_filter($this->getBookings(), fn (array $booking): bool => $booking['staff_id'] === $staffId && str_starts_with($booking['start_at'], $date) && in_array($booking['status'], ['new', 'pending', 'confirmed', 'arrived', 'started'], true));
+        $bookings = array_filter($this->getBookings(), fn (array $booking): bool => $booking['staff_id'] === $staffId && str_starts_with($booking['start_at'], $date) && in_array($booking['status'], ['awaiting_payment', 'new', 'pending', 'confirmed', 'arrived', 'started'], true));
         $blocks = array_filter($this->getBlocks(), fn (array $block): bool => $block['staff_id'] === $staffId && str_starts_with($block['start_at'], $date));
 
         $slots = [];
@@ -1235,7 +1235,7 @@ final class SalonRepository
         $duration = array_reduce($serviceIds, fn (int $carry, int $serviceId): int => $carry + ((int) ($this->findService($serviceId)['duration'] ?? 0)), 0);
         $start = new \DateTimeImmutable("{$date} {$time}:00");
         $end = $start->modify("+{$duration} minutes");
-        $dailyBookings = array_filter($this->getBookings(), fn (array $booking): bool => $booking['staff_id'] === $staffId && str_starts_with($booking['start_at'], $date) && in_array($booking['status'], ['new', 'pending', 'confirmed', 'arrived', 'started'], true));
+        $dailyBookings = array_filter($this->getBookings(), fn (array $booking): bool => $booking['staff_id'] === $staffId && str_starts_with($booking['start_at'], $date) && in_array($booking['status'], ['awaiting_payment', 'new', 'pending', 'confirmed', 'arrived', 'started'], true));
         $blocks = array_filter($this->getBlocks(), fn (array $block): bool => $block['staff_id'] === $staffId && str_starts_with($block['start_at'], $date));
 
         if ($this->hasOverlap($start, $end, $dailyBookings, $blocks)) {
@@ -1274,6 +1274,7 @@ final class SalonRepository
             $reference = 'BK-' . date('ymdHis');
             $notes = trim((string) ($payload['notes'] ?? ''));
             $channel = $source === 'customer' ? 'Portal Customer' : 'Internal';
+            $initialStatus = $source === 'customer' ? 'awaiting_payment' : 'new';
 
             $this->pdo()->beginTransaction();
             try {
@@ -1287,7 +1288,7 @@ final class SalonRepository
                         'channel' => $channel,
                         'start_at' => $start->format('Y-m-d H:i:s'),
                         'end_at' => $end->format('Y-m-d H:i:s'),
-                        'status' => 'new',
+                        'status' => $initialStatus,
                         'notes' => $notes !== '' ? $notes : null,
                     ]
                 );
@@ -1319,7 +1320,7 @@ final class SalonRepository
 
                 return [
                     'success' => true,
-                    'message' => 'Booking berhasil dibuat.',
+                    'message' => $source === 'customer' ? 'Booking berhasil dibuat. Lanjutkan ke pembayaran untuk mengaktifkan jadwal.' : 'Booking berhasil dibuat.',
                     'booking' => [
                         'id' => $bookingId,
                         'reference' => $reference,
@@ -1329,7 +1330,7 @@ final class SalonRepository
                         'service_items' => $serviceItems,
                         'start_at' => $start->format('Y-m-d H:i:s'),
                         'end_at' => $end->format('Y-m-d H:i:s'),
-                        'status' => 'new',
+                        'status' => $initialStatus,
                         'channel' => $channel,
                         'notes' => $notes,
                     ],
@@ -1351,7 +1352,7 @@ final class SalonRepository
             'service_items' => $serviceItems,
             'start_at' => $start->format('Y-m-d H:i:s'),
             'end_at' => $end->format('Y-m-d H:i:s'),
-            'status' => 'new',
+            'status' => $source === 'customer' ? 'awaiting_payment' : 'new',
             'channel' => $source === 'customer' ? 'Portal Customer' : 'Internal',
             'notes' => trim((string) ($payload['notes'] ?? '')),
         ];
@@ -1363,7 +1364,221 @@ final class SalonRepository
             'action' => 'Membuat booking ' . $booking['reference'],
         ];
 
-        return ['success' => true, 'message' => 'Booking berhasil dibuat.', 'booking' => $booking];
+        return ['success' => true, 'message' => $source === 'customer' ? 'Booking berhasil dibuat. Lanjutkan ke pembayaran untuk mengaktifkan jadwal.' : 'Booking berhasil dibuat.', 'booking' => $booking];
+    }
+
+    public function updateBooking(array $payload, array $actor): array
+    {
+        $bookingId = (int) ($payload['booking_id'] ?? 0);
+        $booking = $this->findBooking($bookingId);
+
+        if ($booking === null) {
+            return ['success' => false, 'message' => 'Booking yang ingin diubah tidak ditemukan.'];
+        }
+
+        $serviceIds = array_map('intval', $payload['service_ids'] ?? []);
+        $serviceStartTimes = array_values($payload['service_start_times'] ?? []);
+        $serviceDurations = array_values($payload['service_durations'] ?? []);
+        $serviceStaffIds = array_values($payload['service_staff_ids'] ?? []);
+        $staffId = (int) ($payload['staff_id'] ?? 0);
+        $date = trim((string) ($payload['date'] ?? ''));
+        $time = trim((string) ($payload['time'] ?? ''));
+        $customerName = trim((string) ($payload['customer_name'] ?? ''));
+        $customerPhone = trim((string) ($payload['customer_phone'] ?? ''));
+        $notes = trim((string) ($payload['notes'] ?? ''));
+
+        if ($serviceIds === [] || $staffId === 0 || $date === '' || $time === '' || $customerName === '') {
+            return ['success' => false, 'message' => 'Mohon lengkapi layanan, staff, tanggal, dan data pelanggan.'];
+        }
+
+        $start = new \DateTimeImmutable("{$date} {$time}:00");
+        $serviceCursor = $start;
+        $serviceItems = [];
+        $end = $start;
+
+        foreach ($serviceIds as $index => $serviceId) {
+            $service = $this->findService($serviceId);
+            $serviceDuration = max(5, (int) ($serviceDurations[$index] ?? $service['duration'] ?? 60));
+            $serviceStartTime = trim((string) ($serviceStartTimes[$index] ?? ''));
+            $serviceStaffId = (int) ($serviceStaffIds[$index] ?? $staffId);
+            $serviceStaffId = $serviceStaffId > 0 ? $serviceStaffId : $staffId;
+            $serviceStart = $serviceStartTime !== ''
+                ? new \DateTimeImmutable("{$date} {$serviceStartTime}:00")
+                : $serviceCursor;
+            $serviceEnd = $serviceStart->modify("+{$serviceDuration} minutes");
+
+            $serviceItems[] = [
+                'service_id' => $serviceId,
+                'staff_id' => $serviceStaffId,
+                'start_at' => $serviceStart->format('Y-m-d H:i:s'),
+                'end_at' => $serviceEnd->format('Y-m-d H:i:s'),
+                'duration' => $serviceDuration,
+                'price' => (float) ($service['price'] ?? 0),
+            ];
+
+            if ($serviceStartTime === '') {
+                $serviceCursor = $serviceEnd;
+            }
+
+            if ($serviceEnd > $end) {
+                $end = $serviceEnd;
+            }
+        }
+
+        $dailyBookings = array_filter(
+            $this->getBookings(),
+            fn (array $candidate): bool => (int) ($candidate['id'] ?? 0) !== $bookingId
+                && $candidate['staff_id'] === $staffId
+                && str_starts_with($candidate['start_at'], $date)
+                && in_array($candidate['status'], ['awaiting_payment', 'new', 'pending', 'confirmed', 'arrived', 'started'], true)
+        );
+        $blocks = array_filter($this->getBlocks(), fn (array $block): bool => $block['staff_id'] === $staffId && str_starts_with($block['start_at'], $date));
+
+        if ($this->hasOverlap($start, $end, $dailyBookings, $blocks)) {
+            return ['success' => false, 'message' => 'Slot bentrok dengan booking lain atau blocked time.'];
+        }
+
+        $customerId = $this->resolveCustomer($customerName, $customerPhone);
+
+        if ($this->usingDb()) {
+            $this->pdo()->beginTransaction();
+            try {
+                $this->dbExecute(
+                    "UPDATE bookings
+                     SET customer_id = :customer_id,
+                         staff_id = :staff_id,
+                         start_at = :start_at,
+                         end_at = :end_at,
+                         notes = :notes
+                     WHERE id = :id",
+                    [
+                        'customer_id' => $customerId,
+                        'staff_id' => $staffId,
+                        'start_at' => $start->format('Y-m-d H:i:s'),
+                        'end_at' => $end->format('Y-m-d H:i:s'),
+                        'notes' => $notes !== '' ? $notes : null,
+                        'id' => $bookingId,
+                    ]
+                );
+
+                $this->dbExecute("DELETE FROM booking_items WHERE booking_id = :booking_id", [
+                    'booking_id' => $bookingId,
+                ]);
+
+                foreach ($serviceItems as $item) {
+                    $this->dbExecute(
+                        "INSERT INTO booking_items (booking_id, service_id, duration_minutes, price)
+                         VALUES (:booking_id, :service_id, :duration, :price)",
+                        [
+                            'booking_id' => $bookingId,
+                            'service_id' => (int) $item['service_id'],
+                            'duration' => (int) $item['duration'],
+                            'price' => (float) $item['price'],
+                        ]
+                    );
+                }
+
+                $this->dbExecute(
+                    "INSERT INTO activity_logs (user_id, actor_name, action_text, created_at)
+                     VALUES (:user_id, :actor_name, :action_text, NOW())",
+                    [
+                        'user_id' => $actor['id'] ?? null,
+                        'actor_name' => $actor['name'] ?? 'Admin',
+                        'action_text' => 'Mengubah booking ' . (string) ($booking['reference'] ?? $bookingId),
+                    ]
+                );
+
+                $this->pdo()->commit();
+            } catch (\Throwable $throwable) {
+                $this->pdo()->rollBack();
+
+                return ['success' => false, 'message' => 'Gagal memperbarui booking: ' . $throwable->getMessage()];
+            }
+        } else {
+            foreach ($_SESSION['starstyle']['bookings'] as &$sessionBooking) {
+                if ((int) ($sessionBooking['id'] ?? 0) !== $bookingId) {
+                    continue;
+                }
+
+                $sessionBooking['customer_id'] = $customerId;
+                $sessionBooking['staff_id'] = $staffId;
+                $sessionBooking['service_ids'] = $serviceIds;
+                $sessionBooking['service_items'] = $serviceItems;
+                $sessionBooking['start_at'] = $start->format('Y-m-d H:i:s');
+                $sessionBooking['end_at'] = $end->format('Y-m-d H:i:s');
+                $sessionBooking['notes'] = $notes;
+                break;
+            }
+            unset($sessionBooking);
+
+            $_SESSION['starstyle']['activity_logs'][] = [
+                'time' => date('Y-m-d H:i:s'),
+                'actor' => $actor['name'] ?? 'Admin',
+                'action' => 'Mengubah booking ' . (string) ($booking['reference'] ?? $bookingId),
+            ];
+        }
+
+        return ['success' => true, 'message' => 'Agenda berhasil diperbarui.'];
+    }
+
+    public function updateBookingStatus(int $bookingId, string $status, array $actor): array
+    {
+        $booking = $this->findBooking($bookingId);
+        if ($booking === null) {
+            return ['success' => false, 'message' => 'Booking tidak ditemukan.'];
+        }
+
+        $normalizedStatus = strtolower(trim($status));
+        $allowedStatuses = ['new', 'confirmed', 'arrived', 'started', 'completed', 'cancelled', 'no_show'];
+        if (!in_array($normalizedStatus, $allowedStatuses, true)) {
+            return ['success' => false, 'message' => 'Status booking tidak valid.'];
+        }
+
+        if ($this->usingDb()) {
+            try {
+                $this->dbExecute(
+                    "UPDATE bookings SET status = :status WHERE id = :id",
+                    [
+                        'status' => $normalizedStatus,
+                        'id' => $bookingId,
+                    ]
+                );
+
+                $this->dbExecute(
+                    "INSERT INTO activity_logs (user_id, actor_name, action_text, created_at)
+                     VALUES (:user_id, :actor_name, :action_text, NOW())",
+                    [
+                        'user_id' => $actor['id'] ?? null,
+                        'actor_name' => $actor['name'] ?? 'Admin',
+                        'action_text' => 'Mengubah status booking ' . (string) ($booking['reference'] ?? $bookingId) . ' menjadi ' . strtoupper($normalizedStatus),
+                    ]
+                );
+            } catch (\Throwable $throwable) {
+                return ['success' => false, 'message' => 'Gagal memperbarui status booking: ' . $throwable->getMessage()];
+            }
+        } else {
+            foreach ($_SESSION['starstyle']['bookings'] as &$sessionBooking) {
+                if ((int) ($sessionBooking['id'] ?? 0) !== $bookingId) {
+                    continue;
+                }
+
+                $sessionBooking['status'] = $normalizedStatus;
+                break;
+            }
+            unset($sessionBooking);
+
+            $_SESSION['starstyle']['activity_logs'][] = [
+                'time' => date('Y-m-d H:i:s'),
+                'actor' => $actor['name'] ?? 'Admin',
+                'action' => 'Mengubah status booking ' . (string) ($booking['reference'] ?? $bookingId) . ' menjadi ' . strtoupper($normalizedStatus),
+            ];
+        }
+
+        return [
+            'success' => true,
+            'message' => 'Status agenda berhasil diperbarui.',
+            'status' => $normalizedStatus,
+        ];
     }
 
     public function createBlock(array $payload, array $actor): array
@@ -1386,7 +1601,7 @@ final class SalonRepository
             return ['success' => false, 'message' => 'Jam selesai harus lebih besar daripada jam mulai.'];
         }
 
-        $dailyBookings = array_filter($this->getBookings(), fn (array $booking): bool => $booking['staff_id'] === $staffId && str_starts_with($booking['start_at'], $date) && in_array($booking['status'], ['new', 'pending', 'confirmed', 'arrived', 'started'], true));
+        $dailyBookings = array_filter($this->getBookings(), fn (array $booking): bool => $booking['staff_id'] === $staffId && str_starts_with($booking['start_at'], $date) && in_array($booking['status'], ['awaiting_payment', 'new', 'pending', 'confirmed', 'arrived', 'started'], true));
         $dailyBlocks = array_filter($this->getBlocks(), fn (array $block): bool => $block['staff_id'] === $staffId && str_starts_with($block['start_at'], $date));
 
         if ($this->hasOverlap($start, $end, $dailyBookings, $dailyBlocks)) {
@@ -1473,7 +1688,7 @@ final class SalonRepository
             return ['success' => false, 'message' => 'Jam selesai harus lebih besar daripada jam mulai.'];
         }
 
-        $dailyBookings = array_filter($this->getBookings(), fn (array $booking): bool => $booking['staff_id'] === $staffId && str_starts_with($booking['start_at'], $date) && in_array($booking['status'], ['new', 'pending', 'confirmed', 'arrived', 'started'], true));
+        $dailyBookings = array_filter($this->getBookings(), fn (array $booking): bool => $booking['staff_id'] === $staffId && str_starts_with($booking['start_at'], $date) && in_array($booking['status'], ['awaiting_payment', 'new', 'pending', 'confirmed', 'arrived', 'started'], true));
         $dailyBlocks = array_filter(
             $this->getBlocks(),
             fn (array $block): bool => (int) $block['id'] !== $blockId && $block['staff_id'] === $staffId && str_starts_with($block['start_at'], $date)
@@ -1775,6 +1990,157 @@ final class SalonRepository
         return ['success' => true, 'message' => 'Checkout berhasil diproses.', 'transaction' => $transaction];
     }
 
+    public function bookingPaymentSummary(int $bookingId): ?array
+    {
+        $booking = $this->findBooking($bookingId);
+        if ($booking === null) {
+            return null;
+        }
+
+        $customer = $this->findCustomer((int) $booking['customer_id']);
+        $staff = $this->findStaff((int) $booking['staff_id']);
+        $services = array_values(array_filter(array_map(fn (int $serviceId): ?array => $this->findService($serviceId), $booking['service_ids']), fn (?array $service): bool => $service !== null));
+        $items = array_map(fn (array $service): array => [
+            'type' => 'service',
+            'name' => $service['name'],
+            'qty' => 1,
+            'price' => (float) ($service['price'] ?? 0),
+        ], $services);
+        $total = array_reduce($items, fn (float $carry, array $item): float => $carry + ((float) $item['price'] * (int) $item['qty']), 0.0);
+
+        return [
+            'booking' => $booking,
+            'customer' => $customer,
+            'staffMember' => $staff,
+            'services' => $services,
+            'items' => $items,
+            'total' => $total,
+        ];
+    }
+
+    public function completeCustomerBookingPayment(int $bookingId, array $payload, array $actor): array
+    {
+        $summary = $this->bookingPaymentSummary($bookingId);
+        if ($summary === null) {
+            return ['success' => false, 'message' => 'Booking pembayaran tidak ditemukan.'];
+        }
+
+        $booking = $summary['booking'];
+        if (($booking['status'] ?? '') !== 'awaiting_payment') {
+            return ['success' => false, 'message' => 'Booking ini tidak lagi menunggu pembayaran.'];
+        }
+
+        $paymentMethod = trim((string) ($payload['payment_method'] ?? ''));
+        if ($paymentMethod === '') {
+            return ['success' => false, 'message' => 'Pilih metode pembayaran terlebih dahulu.'];
+        }
+
+        $items = $summary['items'];
+        $customerId = (int) ($booking['customer_id'] ?? 0);
+        $staffId = (int) ($booking['staff_id'] ?? 0);
+        $bookingReference = (string) ($booking['reference'] ?? '');
+        $customerName = (string) ($summary['customer']['name'] ?? ($actor['name'] ?? 'Customer'));
+
+        if ($this->usingDb()) {
+            $reference = 'TRX-' . date('ymdHis');
+
+            $this->pdo()->beginTransaction();
+            try {
+                $this->dbExecute(
+                    "UPDATE bookings SET status = 'confirmed' WHERE id = :id",
+                    ['id' => $bookingId]
+                );
+
+                $this->dbExecute(
+                    "INSERT INTO transactions (booking_id, customer_id, staff_id, reference, payment_method, status, discount_amount, rounding_amount, paid_at)
+                     VALUES (:booking_id, :customer_id, :staff_id, :reference, :payment_method, 'paid', 0, 0, NOW())",
+                    [
+                        'booking_id' => $bookingId,
+                        'customer_id' => $customerId,
+                        'staff_id' => $staffId,
+                        'reference' => $reference,
+                        'payment_method' => $paymentMethod,
+                    ]
+                );
+                $transactionId = (int) $this->pdo()->lastInsertId();
+
+                foreach ($items as $item) {
+                    $this->dbExecute(
+                        "INSERT INTO transaction_items (transaction_id, item_type, item_name, quantity, price)
+                         VALUES (:transaction_id, :item_type, :item_name, :quantity, :price)",
+                        [
+                            'transaction_id' => $transactionId,
+                            'item_type' => (string) ($item['type'] ?? 'service'),
+                            'item_name' => (string) ($item['name'] ?? 'Item'),
+                            'quantity' => (int) ($item['qty'] ?? 1),
+                            'price' => (float) ($item['price'] ?? 0),
+                        ]
+                    );
+                }
+
+                $invoiceNumber = 'INV-' . date('ymdHis');
+                $this->dbExecute(
+                    "INSERT INTO invoices (transaction_id, invoice_number, status, issued_at)
+                     VALUES (:transaction_id, :invoice_number, 'paid', NOW())",
+                    [
+                        'transaction_id' => $transactionId,
+                        'invoice_number' => $invoiceNumber,
+                    ]
+                );
+
+                $this->dbExecute(
+                    "INSERT INTO activity_logs (user_id, actor_name, action_text, created_at)
+                     VALUES (:user_id, :actor_name, :action_text, NOW())",
+                    [
+                        'user_id' => $actor['id'] ?? null,
+                        'actor_name' => $customerName,
+                        'action_text' => 'Menyelesaikan pembayaran booking ' . $bookingReference,
+                    ]
+                );
+
+                $this->pdo()->commit();
+
+                return ['success' => true, 'message' => 'Pembayaran berhasil. Booking sudah masuk ke kalender staf terpilih.'];
+            } catch (\Throwable $throwable) {
+                $this->pdo()->rollBack();
+
+                return ['success' => false, 'message' => 'Gagal memproses pembayaran: ' . $throwable->getMessage()];
+            }
+        }
+
+        foreach ($_SESSION['starstyle']['bookings'] as $index => $storedBooking) {
+            if ((int) ($storedBooking['id'] ?? 0) !== $bookingId) {
+                continue;
+            }
+
+            $_SESSION['starstyle']['bookings'][$index]['status'] = 'confirmed';
+            break;
+        }
+
+        $transactionId = $this->nextId($_SESSION['starstyle']['transactions'], 8000);
+        $_SESSION['starstyle']['transactions'][] = [
+            'id' => $transactionId,
+            'booking_id' => $bookingId,
+            'reference' => 'TRX-' . date('ymd') . '-' . $transactionId,
+            'customer_id' => $customerId,
+            'staff_id' => $staffId,
+            'date' => date('Y-m-d H:i:s'),
+            'items' => $items,
+            'discount' => 0,
+            'rounding' => 0,
+            'status' => 'paid',
+            'payment_method' => $paymentMethod,
+        ];
+
+        $_SESSION['starstyle']['activity_logs'][] = [
+            'time' => date('Y-m-d H:i:s'),
+            'actor' => $customerName,
+            'action' => 'Menyelesaikan pembayaran booking ' . $bookingReference,
+        ];
+
+        return ['success' => true, 'message' => 'Pembayaran berhasil. Booking sudah masuk ke kalender staf terpilih.'];
+    }
+
     public function calculateCart(array $items, ?string $voucherCode = null): array
     {
         $subtotal = array_reduce($items, fn (float $sum, array $item): float => $sum + ((float) $item['price'] * (int) $item['qty']), 0.0);
@@ -2002,6 +2368,17 @@ final class SalonRepository
         foreach ($this->getCustomers() as $customer) {
             if ($customer['id'] === $customerId) {
                 return $customer;
+            }
+        }
+
+        return null;
+    }
+
+    public function findBooking(int $bookingId): ?array
+    {
+        foreach ($this->getBookings() as $booking) {
+            if ((int) ($booking['id'] ?? 0) === $bookingId) {
+                return $booking;
             }
         }
 

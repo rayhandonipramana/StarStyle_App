@@ -47,6 +47,25 @@ final class AdminController extends BaseController
         $this->redirect('/calendar');
     }
 
+    public function updateInternalBooking(): void
+    {
+        $this->authorize('calendar.create');
+        verify_csrf();
+        $result = $this->repo()->updateBooking($_POST, $this->internalUser());
+        flash($result['success'] ? 'success' : 'error', $result['message']);
+        $this->redirect('/calendar');
+    }
+
+    public function updateBookingStatus(): void
+    {
+        $this->authorize('calendar.create');
+        verify_csrf();
+        $bookingId = (int) ($_POST['booking_id'] ?? 0);
+        $status = (string) ($_POST['status'] ?? '');
+        $result = $this->repo()->updateBookingStatus($bookingId, $status, $this->internalUser());
+        $this->json($result, $result['success'] ? 200 : 422);
+    }
+
     public function createBlock(): void
     {
         $this->authorize('calendar.block');
